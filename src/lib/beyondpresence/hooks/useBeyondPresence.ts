@@ -158,15 +158,19 @@ export function useBeyondPresence(config: UseBeyondPresenceConfig): UseBeyondPre
     try {
       logger.info('Starting connection process');
 
-      // Create BeyondPresence session
-      const newSession = await beyondPresenceService.current.createSession(config.session);
+      // Create BeyondPresence session (simplified - just gets viewer token)
+      const newSession = await beyondPresenceService.current.createSession({
+        ...config.session,
+        roomName: `avatar-room-${Date.now()}` // Match Python agent's room naming
+      });
       setSession(newSession);
       
-      logger.info('BeyondPresence session created', { 
+      logger.info('Viewer session created', { 
         sessionId: newSession.id,
+        roomName: newSession.roomName,
         fullSession: newSession
       });
-      console.log('Full BeyondPresence session:', newSession);
+      console.log('Full session details:', newSession);
       
       // Decode the viewer token to see room name
       if (newSession.livekitToken) {
