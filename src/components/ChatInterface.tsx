@@ -1,43 +1,48 @@
 'use client';
 
 import React, { useState } from 'react';
-import { KontextButton } from './KontextButton';
-import { useKontext } from '../providers/KontextProvider';
+import { useKontext } from '@kontext.dev/kontext-sdk/react';
+import { KontextConnectButton } from '@kontext.dev/kontext-sdk/components';
 
 interface ChatInterfaceProps {
-  userId?: string;
   className?: string;
 }
 
-interface ChatMessage {
+interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
 }
 
-export function ChatInterface({ userId = 'demo-user', className }: ChatInterfaceProps) {
+export function ChatInterface({ className }: ChatInterfaceProps) {
   const [privacyLevel, setPrivacyLevel] = useState<'strict' | 'moderate' | 'none'>('none');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { isConnected, userId: contextUserId } = useKontext();
+  const [error, setError] = useState<string | null>(null);
+  const { isConnected, userId, isLoading: kontextLoading, error: kontextError } = useKontext();
   
-  // Use the connected user ID if available, otherwise use prop
-  const effectiveUserId = isConnected ? contextUserId : userId;
+  // Use connected Kontext user ID, or fall back to demo user
+  const effectiveUserId = userId || 'demo-user';
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInput(e.target.value);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
-    const userMessage: ChatMessage = {
+    const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: input.trim()
+      content: input.trim(),
     };
 
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
+    setError(null);
 
     try {
       const response = await fetch('/api/chat', {
@@ -46,62 +51,65 @@ export function ChatInterface({ userId = 'demo-user', className }: ChatInterface
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          prompt: input.trim(),
+          messages: [...messages, userMessage],
           userId: effectiveUserId,
           privacyLevel,
         }),
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        throw new Error('Failed to send message');
       }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
-      let assistantContent = '';
 
-      const assistantMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      let assistantContent = '';
+      const assistantMessage: Message = {
+        id: Date.now().toString() + '_assistant',
         role: 'assistant',
-        content: ''
+        content: '',
       };
 
       setMessages(prev => [...prev, assistantMessage]);
 
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n').filter(line => line.trim());
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
 
-          for (const line of lines) {
-            if (line.startsWith('0:')) {
-              try {
-                const content = JSON.parse(line.slice(2));
-                assistantContent += content;
-                setMessages(prev => prev.map(msg => 
-                  msg.id === assistantMessage.id 
-                    ? { ...msg, content: assistantContent }
-                    : msg
-                ));
-              } catch (_e) {
-                console.warn('Failed to parse chunk:', line);
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') continue;
+            
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.choices?.[0]?.delta?.content) {
+                assistantContent += parsed.choices[0].delta.content;
+                setMessages(prev => 
+                  prev.map(msg => 
+                    msg.id === assistantMessage.id 
+                      ? { ...msg, content: assistantContent }
+                      : msg
+                  )
+                );
               }
+            } catch (_e) {
+              // Skip invalid JSON lines
             }
           }
         }
       }
-
-    } catch (error) {
-      console.error('Chat error:', error);
-      const errorMessage: ChatMessage = {
-        id: (Date.now() + 2).toString(),
-        role: 'assistant',
-        content: 'Sorry, I encountered an error processing your message.'
-      };
-      setMessages(prev => [...prev, errorMessage]);
+    } catch (err) {
+      console.error('Chat error:', err);
+      setError(err instanceof Error ? err.message : 'Failed to send message');
     } finally {
       setIsLoading(false);
     }
@@ -113,7 +121,7 @@ export function ChatInterface({ userId = 'demo-user', className }: ChatInterface
       <div className="flex-shrink-0 border-b border-gray-200 px-4 py-3 bg-white">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-medium text-gray-900">
-            Chat with Kontext AI
+            Chat with AI Assistant
           </h3>
           <div className="flex items-center space-x-2">
             <label className="text-sm text-gray-600">Privacy:</label>
@@ -128,9 +136,52 @@ export function ChatInterface({ userId = 'demo-user', className }: ChatInterface
             </select>
           </div>
         </div>
-        <div className="text-sm text-gray-500 mt-1">
-          User ID: {effectiveUserId} {isConnected && <span className="text-green-600">(Kontext Connected)</span>}
+        
+        {/* Connection Status */}
+        <div className="flex items-center justify-between mt-2">
+          <div className="flex items-center space-x-2">
+            {kontextLoading ? (
+              <div className="flex items-center space-x-1">
+                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"></div>
+                <span className="text-xs text-gray-500">Checking connection...</span>
+              </div>
+            ) : isConnected ? (
+              <div className="flex items-center space-x-1">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                <span className="text-xs text-green-700 font-medium">Kontext Connected</span>
+                <span className="text-xs text-gray-500">({userId})</span>
+              </div>
+            ) : (
+              <div className="flex items-center space-x-1">
+                <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                <span className="text-xs text-gray-600">Using default responses</span>
+                <span className="text-xs text-gray-500">({effectiveUserId})</span>
+              </div>
+            )}
+          </div>
+          
+          {kontextError && (
+            <span className="text-xs text-red-600">⚠ {kontextError}</span>
+          )}
         </div>
+
+        {/* Personalization Status */}
+        {isConnected && (
+          <div className="mt-2 px-3 py-1 bg-green-50 border border-green-200 rounded-md">
+            <p className="text-xs text-green-800">
+              ✨ Responses are personalized using your connected data
+            </p>
+          </div>
+        )}
+        
+        {/* Error Display */}
+        {error && (
+          <div className="mt-2 px-3 py-1 bg-red-50 border border-red-200 rounded-md">
+            <p className="text-xs text-red-800">
+              ⚠ {error}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Messages */}
@@ -176,12 +227,12 @@ export function ChatInterface({ userId = 'demo-user', className }: ChatInterface
       </div>
 
       {/* Input */}
-      <div className="flex-shrink-0 border-t border-gray-200 px-4 py-3 bg-white space-y-3">
+      <div className="flex-shrink-0 border-t border-gray-200 px-4 py-2 bg-white space-y-2">
         <form onSubmit={handleSubmit} className="flex space-x-2">
           <input
             type="text"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInputChange}
             placeholder="Type your message..."
             className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             disabled={isLoading}
@@ -197,7 +248,17 @@ export function ChatInterface({ userId = 'demo-user', className }: ChatInterface
         
         {/* Kontext Connection Button */}
         <div className="flex justify-center">
-          <KontextButton size="sm" />
+          {isConnected ? (
+            <div className="px-4 py-2 bg-gray-100 text-gray-600 text-sm rounded-lg">
+              ✓ Kontext Connected ({userId})
+            </div>
+          ) : (
+            <KontextConnectButton 
+              className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white text-sm rounded-lg transition-colors"
+            >
+              Connect Gmail for Personalization
+            </KontextConnectButton>
+          )}
         </div>
       </div>
     </div>
