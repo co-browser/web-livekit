@@ -69,7 +69,17 @@ export class LiveKitService {
 
       this.logger.info('Successfully connected to LiveKit room', {
         roomName: this.room.name,
-        numParticipants: this.room.numParticipants
+        numParticipants: this.room.numParticipants,
+        participants: Array.from(this.room.remoteParticipants.values()).map(p => ({
+          identity: p.identity,
+          sid: p.sid,
+          tracks: Array.from(p.trackPublications.values()).map(t => ({
+            trackSid: t.trackSid,
+            kind: t.kind,
+            source: t.source,
+            subscribed: t.isSubscribed
+          }))
+        }))
       });
 
       // Reset reconnect attempts on successful connection
@@ -170,7 +180,11 @@ export class LiveKitService {
     if (!this.room) return;
 
     this.room.on(RoomEvent.Connected, () => {
-      this.logger.info('Room connected event received');
+      this.logger.info('Room connected event received', {
+        roomName: this.room?.name,
+        localParticipant: this.room?.localParticipant?.identity,
+        remoteParticipants: this.room ? Array.from(this.room.remoteParticipants.values()).map(p => p.identity) : []
+      });
     });
 
     this.room.on(RoomEvent.Disconnected, (reason) => {
@@ -197,7 +211,10 @@ export class LiveKitService {
       this.logger.info('Track subscribed', {
         trackKind: track.kind,
         trackSource: track.source,
-        participant: participant.identity
+        participant: participant.identity,
+        trackSid: track.sid,
+        isMuted: track.isMuted,
+        isEnabled: publication.isEnabled
       });
     });
 
@@ -217,6 +234,36 @@ export class LiveKitService {
 
     this.room.on(RoomEvent.MediaDevicesError, (error) => {
       this.logger.error('Media devices error', error);
+    });
+
+    this.room.on(RoomEvent.ParticipantConnected, (participant) => {
+      this.logger.info('🎉 PARTICIPANT JOINED!', {
+        identity: participant.identity,
+        sid: participant.sid,
+        isLocal: participant.isLocal,
+        metadata: participant.metadata,
+        tracks: Array.from(participant.trackPublications.values()).map(t => ({
+          trackSid: t.trackSid,
+          kind: t.kind,
+          source: t.source,
+          isSubscribed: t.isSubscribed
+        }))
+      });
+      
+      // Check if this is the avatar
+      if (participant.identity.includes('avatar')) {
+        this.logger.info('🤖 AVATAR HAS JOINED THE ROOM!', {
+          identity: participant.identity,
+          trackCount: participant.trackPublications.size
+        });
+      }
+    });
+
+    this.room.on(RoomEvent.ParticipantDisconnected, (participant) => {
+      this.logger.info('Participant disconnected', {
+        identity: participant.identity,
+        sid: participant.sid
+      });
     });
   }
 

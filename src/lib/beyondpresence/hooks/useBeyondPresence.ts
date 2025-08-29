@@ -162,7 +162,11 @@ export function useBeyondPresence(config: UseBeyondPresenceConfig): UseBeyondPre
       const newSession = await beyondPresenceService.current.createSession(config.session);
       setSession(newSession);
       
-      logger.info('BeyondPresence session created', { sessionId: newSession.id });
+      logger.info('BeyondPresence session created', { 
+        sessionId: newSession.id,
+        fullSession: newSession
+      });
+      console.log('Full BeyondPresence session:', newSession);
 
       // Connect to LiveKit room
       const room = await liveKitService.current.connect({
@@ -187,6 +191,31 @@ export function useBeyondPresence(config: UseBeyondPresenceConfig): UseBeyondPre
       if (liveKitService.current.isConnected()) {
         handleConnected();
       }
+
+      // Check for existing participants after a short delay
+      setTimeout(() => {
+        if (room.remoteParticipants.size > 0) {
+          logger.info('Existing participants found:', {
+            count: room.remoteParticipants.size,
+            participants: Array.from(room.remoteParticipants.values()).map(p => ({
+              identity: p.identity,
+              sid: p.sid,
+              tracks: Array.from(p.trackPublications.values()).map(t => ({
+                kind: t.kind,
+                source: t.source,
+                isSubscribed: t.isSubscribed
+              }))
+            }))
+          });
+        } else {
+          logger.warn('No remote participants in room - avatar may not be publishing yet');
+          logger.info('Room details:', {
+            name: room.name,
+            localParticipant: room.localParticipant?.identity,
+            state: room.state
+          });
+        }
+      }, 5000); // Increased to 5 seconds
 
     } catch (err) {
       logger.error('Connection failed', err as Error);
