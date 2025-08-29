@@ -300,4 +300,86 @@ export class LiveKitService {
   canPlaybackAudio(): boolean {
     return this.room?.canPlaybackAudio ?? false;
   }
+
+  /**
+   * Publishes data to a specific participant or all participants
+   */
+  async publishData(
+    data: Uint8Array | string,
+    kind: 'reliable' | 'lossy' = 'reliable',
+    destinationIdentities?: string[]
+  ): Promise<void> {
+    if (!this.room) {
+      throw handleLiveKitError(new Error('No room connected'), 'publish data failed');
+    }
+
+    try {
+      const encoder = new TextEncoder();
+      const payload = typeof data === 'string' ? encoder.encode(data) : data;
+      
+      await this.room.localParticipant.publishData(payload, {
+        reliable: kind === 'reliable',
+        destinationIdentities,
+      });
+      
+      this.logger.debug('Data published successfully', {
+        size: payload.byteLength,
+        kind,
+        destinations: destinationIdentities
+      });
+    } catch (error) {
+      this.logger.error('Failed to publish data', error as Error);
+      throw handleLiveKitError(error, 'publish data failed');
+    }
+  }
+
+  /**
+   * Publishes audio data to the avatar
+   */
+  async sendAudioToAvatar(audioData: Uint8Array): Promise<void> {
+    if (!this.room) {
+      throw handleLiveKitError(new Error('No room connected'), 'send audio failed');
+    }
+
+    // Find the avatar participant
+    const avatarParticipant = Array.from(this.room.remoteParticipants.values()).find(
+      p => p.identity.includes('avatar')
+    );
+
+    if (!avatarParticipant) {
+      this.logger.warn('Avatar participant not found in room');
+      return;
+    }
+
+    try {
+      // Send audio data directly to the avatar via data channel
+      await this.publishData(audioData, 'lossy', [avatarParticipant.identity]);
+      
+      this.logger.debug('Audio data sent to avatar', {
+        avatarIdentity: avatarParticipant.identity,
+        dataSize: audioData.byteLength
+      });
+    } catch (error) {
+      this.logger.error('Failed to send audio to avatar', error as Error);
+      throw error;
+    }
+  }
+
+  /**
+   * Sets up data channel listeners
+   */
+  setupDataChannelListeners(
+    onDataReceived?: (data: Uint8Array, participant: any) => void
+  ): void {
+    if (!this.room) return;
+
+    this.room.on('dataReceived', (payload: Uint8Array, participant) => {
+      this.logger.debug('Data received from participant', {
+        from: participant?.identity,
+        size: payload.byteLength
+      });
+      
+      onDataReceived?.(payload, participant);
+    });
+  }
 }

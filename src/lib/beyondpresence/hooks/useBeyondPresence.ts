@@ -167,6 +167,21 @@ export function useBeyondPresence(config: UseBeyondPresenceConfig): UseBeyondPre
         fullSession: newSession
       });
       console.log('Full BeyondPresence session:', newSession);
+      
+      // Decode the viewer token to see room name
+      if (newSession.livekitToken) {
+        const tokenParts = newSession.livekitToken.split('.');
+        if (tokenParts.length === 3) {
+          try {
+            const payload = JSON.parse(atob(tokenParts[1]));
+            console.log('Viewer token payload:', payload);
+            console.log('Viewer will join room:', payload.video?.room);
+            console.log('Viewer identity:', payload.sub);
+          } catch (e) {
+            console.log('Could not decode viewer token');
+          }
+        }
+      }
 
       // Connect to LiveKit room
       const room = await liveKitService.current.connect({
@@ -192,30 +207,63 @@ export function useBeyondPresence(config: UseBeyondPresenceConfig): UseBeyondPre
         handleConnected();
       }
 
-      // Check for existing participants after a short delay
-      setTimeout(() => {
+      // Set up data channel listeners to receive responses from avatar
+      liveKitService.current.setupDataChannelListeners((data, participant) => {
+        logger.info('Received data from participant', {
+          from: participant?.identity,
+          size: data.byteLength
+        });
+      });
+
+      // Try sending initial audio data to trigger the avatar
+      setTimeout(async () => {
+        try {
+          // Send a test audio packet to the avatar
+          const testAudioData = new Uint8Array(1024); // Empty audio data for now
+          await liveKitService.current.sendAudioToAvatar(testAudioData);
+          logger.info('Sent initial audio data to avatar');
+        } catch (error) {
+          logger.error('Failed to send initial audio to avatar', error as Error);
+        }
+      }, 2000);
+
+      // Check for existing participants periodically
+      const checkInterval = setInterval(() => {
         if (room.remoteParticipants.size > 0) {
-          logger.info('Existing participants found:', {
+          logger.info('🎉 Remote participants found!', {
             count: room.remoteParticipants.size,
             participants: Array.from(room.remoteParticipants.values()).map(p => ({
               identity: p.identity,
               sid: p.sid,
+              isAgent: p.isAgent,
+              isCameraEnabled: p.isCameraEnabled,
+              isMicrophoneEnabled: p.isMicrophoneEnabled,
               tracks: Array.from(p.trackPublications.values()).map(t => ({
                 kind: t.kind,
                 source: t.source,
-                isSubscribed: t.isSubscribed
+                isSubscribed: t.isSubscribed,
+                isEnabled: t.isEnabled
               }))
             }))
           });
+          clearInterval(checkInterval);
         } else {
-          logger.warn('No remote participants in room - avatar may not be publishing yet');
-          logger.info('Room details:', {
-            name: room.name,
+          logger.warn('Still waiting for avatar to join...', {
+            roomName: room.name,
             localParticipant: room.localParticipant?.identity,
-            state: room.state
+            state: room.state,
+            elapsedSeconds: 5
           });
         }
-      }, 5000); // Increased to 5 seconds
+      }, 5000);
+      
+      // Clear interval after 30 seconds
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        if (room.remoteParticipants.size === 0) {
+          logger.error('Avatar never joined the room after 30 seconds');
+        }
+      }, 30000);
 
     } catch (err) {
       logger.error('Connection failed', err as Error);
@@ -292,6 +340,74 @@ export function useBeyondPresence(config: UseBeyondPresenceConfig): UseBeyondPre
     }
   }, [config.onError, logger]);
 
+  // Start capturing and sending microphone audio to avatar
+  const startMicrophoneStream = useCallback(async () => {
+    if (!liveKitService.current) {
+      const error = new Error('LiveKit service not initialized');
+      setError(error);
+      config.onError?.(error);
+      return;
+    }
+
+    try {
+      logger.info('Starting microphone capture for avatar');
+      
+      // Get user media (microphone)
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
+      
+      // Create audio context and processor
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      
+      processor.onaudioprocess = async (e) => {
+        const inputData = e.inputBuffer.getChannelData(0);
+        
+        // Convert Float32Array to Uint8Array for transmission
+        const buffer = new ArrayBuffer(inputData.length * 2);
+        const view = new DataView(buffer);
+        
+        for (let i = 0; i < inputData.length; i++) {
+          // Convert float to 16-bit PCM
+          const sample = Math.max(-1, Math.min(1, inputData[i]));
+          view.setInt16(i * 2, sample * 0x7FFF, true);
+        }
+        
+        const audioData = new Uint8Array(buffer);
+        
+        // Send audio to avatar via data channel
+        try {
+          await liveKitService.current.sendAudioToAvatar(audioData);
+        } catch (error) {
+          logger.error('Failed to send audio chunk to avatar', error as Error);
+        }
+      };
+      
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+      
+      logger.info('Microphone stream started, sending audio to avatar');
+      
+      // Return cleanup function
+      return () => {
+        stream.getTracks().forEach(track => track.stop());
+        processor.disconnect();
+        source.disconnect();
+        audioContext.close();
+      };
+    } catch (err) {
+      logger.error('Failed to start microphone stream', err as Error);
+      setError(err as Error);
+      config.onError?.(err as Error);
+    }
+  }, [config.onError, logger]);
+
   // Auto-connect effect
   useEffect(() => {
     if (config.autoConnect && !isConnecting && !isConnected && !error) {
@@ -326,6 +442,7 @@ export function useBeyondPresence(config: UseBeyondPresenceConfig): UseBeyondPre
     connect,
     disconnect,
     startAudio,
+    startMicrophoneStream,
     
     // Audio state
     canPlayAudio,
