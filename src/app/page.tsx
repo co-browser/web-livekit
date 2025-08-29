@@ -1,10 +1,27 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { BeyondPresenceStream } from '../lib/beyondpresence';
+import { ChatInterface } from '../components/ChatInterface';
+import { KontextModal } from '../components/KontextModal';
+import { useKontext } from '../providers/KontextProvider';
 import type { UseBeyondPresenceConfig } from '../lib/beyondpresence';
 
 export default function Home() {
+  const { isConnected, persona } = useKontext();
+  const [showKontextModal, setShowKontextModal] = useState(false);
+
+  // Auto-popup Kontext modal after page loads if not connected
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (persona && !isConnected) {
+        setShowKontextModal(true);
+      }
+    }, 2000); // Show after 2 seconds
+
+    return () => clearTimeout(timer);
+  }, [persona, isConnected]);
+
   // Directly use environment variables
   // Note: livekitToken can be empty - it will be auto-generated server-side if LIVEKIT_API_SECRET is set
   const config: UseBeyondPresenceConfig = {
@@ -51,6 +68,7 @@ export default function Home() {
                 <li>NEXT_PUBLIC_DEMO_AVATAR_ID - Your avatar ID</li>
                 <li>NEXT_PUBLIC_DEMO_LIVEKIT_URL - Your LiveKit server URL</li>
                 <li>LIVEKIT_API_SECRET - Your LiveKit API secret (for auto-generating tokens)</li>
+                <li>KONTEXT_API_KEY - Your Kontext API key (optional, for personalization)</li>
               </ul>
               <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded">
                 <p className="text-sm text-yellow-800">
@@ -70,27 +88,50 @@ export default function Home() {
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-900 mb-4">
-            BeyondPresence Live Stream
+            Personalized AI Assistant
           </h1>
           <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-            Real-time avatar video streaming powered by BeyondPresence and LiveKit
+            Voice and text AI interactions powered by BeyondPresence, LiveKit, and Kontext personalization
           </p>
         </div>
 
-        {/* Main Stream Component */}
-        <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-          <BeyondPresenceStream
-            config={config}
-            className="min-h-[600px]"
-            showConnectionStatus={true}
-            showErrorDisplay={true}
-            onVideoTrackAttached={(_element, track) => {
-              console.log('Video track attached:', track.sid);
-            }}
-            onAudioTrackAttached={(_element, track) => {
-              console.log('Audio track attached:', track.sid);
-            }}
-          />
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Video Stream */}
+          <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+            <div className="p-4 border-b border-gray-200">
+              <h2 className="text-xl font-semibold text-gray-900">Voice Assistant</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Speak to interact with the AI assistant (powered by Kontext personalization)
+              </p>
+            </div>
+            <BeyondPresenceStream
+              config={config}
+              className="min-h-[500px]"
+              showConnectionStatus={true}
+              showErrorDisplay={true}
+              onVideoTrackAttached={(_element, track) => {
+                console.log('Video track attached:', track.sid);
+              }}
+              onAudioTrackAttached={(_element, track) => {
+                console.log('Audio track attached:', track.sid);
+              }}
+            />
+          </div>
+
+          {/* Text Chat Interface */}
+          <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+            <div className="p-4 border-b border-gray-200">
+              <h2 className="text-xl font-semibold text-gray-900">Text Chat</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Type to chat with the same AI assistant (also uses Kontext personalization)
+              </p>
+            </div>
+            <ChatInterface 
+              userId="demo-user"
+              className="h-[500px]"
+            />
+          </div>
         </div>
 
         {/* Feature Information */}
@@ -105,7 +146,7 @@ export default function Home() {
               <h3 className="ml-3 text-lg font-medium text-gray-900">Real-time Video</h3>
             </div>
             <p className="text-gray-600">
-              High-quality avatar video streaming with adaptive bitrate and automatic quality adjustment.
+              High-quality avatar video streaming with personalized AI responses powered by Kontext context understanding.
             </p>
           </div>
 
@@ -119,7 +160,7 @@ export default function Home() {
               <h3 className="ml-3 text-lg font-medium text-gray-900">Crystal Clear Audio</h3>
             </div>
             <p className="text-gray-600">
-              Synchronized audio streaming with browser compatibility handling and user interaction prompts.
+              Speech-to-text processing with Kontext personalization layer before LLM generation for contextual responses.
             </p>
           </div>
 
@@ -133,10 +174,16 @@ export default function Home() {
               <h3 className="ml-3 text-lg font-medium text-gray-900">Robust Connection</h3>
             </div>
             <p className="text-gray-600">
-              Automatic reconnection, error handling, and connection quality monitoring for reliable streaming.
+              Dual-mode interaction: voice chat through LiveKit agent and text chat through web API, both using Kontext personalization.
             </p>
           </div>
         </div>
+        
+        {/* Auto-popup Kontext Modal */}
+        <KontextModal 
+          isOpen={showKontextModal} 
+          onClose={() => setShowKontextModal(false)} 
+        />
       </div>
     </div>
   );
