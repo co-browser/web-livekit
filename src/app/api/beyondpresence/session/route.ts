@@ -17,13 +17,13 @@ async function generateLiveKitTokenForViewer(roomName: string): Promise<string |
     ttl: '24h',
   });
 
-  // Viewer needs permissions to subscribe to avatar's tracks
+  // Viewer needs permissions to subscribe to avatar's tracks AND publish microphone
   token.addGrant({
     room: roomName,
     roomJoin: true,
     canSubscribe: true,
-    canPublish: false,
-    canPublishData: false,
+    canPublish: true,  // Allow publishing for voice chat
+    canPublishData: true,  // Allow data channel communication
   });
 
   console.log(`Generated VIEWER token for room: ${roomName}, identity: ${viewerIdentity}`);

@@ -12,8 +12,7 @@ from livekit.agents import (
     cli,
     llm,
 )
-from livekit.agents.voice import AgentSession
-from livekit.plugins import deepgram, openai, silero
+from livekit.plugins import openai, silero
 from livekit.plugins import bey
 
 load_dotenv()
@@ -25,7 +24,7 @@ logger.setLevel(logging.INFO)
 async def entrypoint(ctx: JobContext):
     """Main entry point for the LiveKit agent with Beyond Presence avatar."""
     
-    # Connect to the room first
+    # Connect to the room with audio subscription
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     logger.info(f"Agent connected to room: {ctx.room.name}")
     
@@ -34,7 +33,16 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"Starting Beyond Presence avatar with ID: {avatar_id}")
     
     # Create the agent session with voice pipeline
-    # Using OpenAI STT instead of Deepgram (no extra API key needed)
+    from livekit.agents.voice import Agent, AgentSession
+    
+    # Define custom assistant class
+    class Assistant(Agent):
+        def __init__(self) -> None:
+            super().__init__(
+                instructions="You are a helpful and friendly AI assistant. Engage in natural conversation with users. Be concise and clear in your responses."
+            )
+    
+    # Create agent session with STT, LLM, TTS components
     session = AgentSession(
         stt=openai.STT(model="whisper-1"),  # OpenAI Speech-to-Text
         llm=openai.LLM(model="gpt-4o-mini"),  # Language Model
@@ -49,25 +57,23 @@ async def entrypoint(ctx: JobContext):
         avatar_participant_name="AI Assistant"
     )
     
-    # Start the avatar and wait for it to join
+    # Start the avatar with the session
     logger.info("Starting avatar session...")
     await avatar.start(session, room=ctx.room)
     logger.info("Avatar has joined the room!")
     
-    # Create the voice agent
-    from livekit.agents.voice import Agent
-    agent = Agent(
-        instructions="You are a helpful and friendly AI assistant. Engage in natural conversation with users. Be concise and clear in your responses.",
-    )
-    
-    # Start the agent session with the user
-    # The avatar will handle the video output
+    # Start the agent session
     await session.start(
-        agent=agent,
         room=ctx.room,
+        agent=Assistant(),
     )
     
-    logger.info("Agent session started successfully with avatar integration")
+    # Generate initial greeting
+    await session.generate_reply(
+        instructions="Greet the user warmly and offer your assistance."
+    )
+    
+    logger.info("Voice assistant started successfully with avatar integration")
 
 
 if __name__ == "__main__":
