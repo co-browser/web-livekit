@@ -69,6 +69,7 @@ export interface UseBeyondPresenceReturn {
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   startAudio: () => Promise<void>;
+  startMicrophoneStream: () => Promise<(() => void) | undefined>;
   
   // Audio state
   canPlayAudio: boolean;

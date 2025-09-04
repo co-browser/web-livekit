@@ -1,4 +1,3 @@
-import BeyondPresence from '@bey-dev/sdk';
 import type { 
   BeyondPresenceConfig, 
   SessionConfig, 
@@ -11,19 +10,15 @@ import { createContextLogger } from '../utils/logger';
  * Service class for managing BeyondPresence sessions
  */
 export class BeyondPresenceService {
-  private client: BeyondPresence;
+  private config: BeyondPresenceConfig;
   private logger = createContextLogger('BeyondPresenceService');
 
   constructor(config: BeyondPresenceConfig) {
     this.logger.info('Initializing BeyondPresence service', { 
-      baseUrl: config.baseUrl,
       hasApiKey: !!config.apiKey 
     });
 
-    this.client = new BeyondPresence({
-      apiKey: config.apiKey,
-      ...(config.baseUrl && { baseUrl: config.baseUrl })
-    });
+    this.config = config;
   }
 
   /**
@@ -37,21 +32,25 @@ export class BeyondPresenceService {
     });
 
     try {
-      const response = await this.client.session.create({
-        avatar_id: config.avatarId,
-        livekit_token: config.livekitToken,
-        livekit_url: config.livekitUrl
+      // Use API route for server-side session creation to avoid CORS issues
+      const response = await fetch('/api/beyondpresence/session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          avatarId: config.avatarId,
+          livekitToken: config.livekitToken,
+          livekitUrl: config.livekitUrl
+        })
       });
 
-      const session: BeyondPresenceSession = {
-        id: response.id,
-        avatarId: config.avatarId,
-        livekitToken: config.livekitToken,
-        livekitUrl: config.livekitUrl,
-        status: 'active', // Assume active when just created
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // Default 24h expiry
-      };
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      }
+
+      const session: BeyondPresenceSession = await response.json();
 
       this.logger.info('Session created successfully', { sessionId: session.id });
       return session;
@@ -71,25 +70,9 @@ export class BeyondPresenceService {
     this.logger.info('Retrieving session', { sessionId });
 
     try {
-      // Note: This assumes the BeyondPresence SDK has a session.get method
-      // If not available, we'll need to store session data locally or use a different approach
-      const response = await this.client.session.retrieve(sessionId);
-
-      const session: BeyondPresenceSession = {
-        id: response.id,
-        avatarId: response.avatar_id || '',
-        livekitToken: response.livekit_token || '',
-        livekitUrl: response.livekit_url || '',
-        status: this.determineSessionStatus(response),
-        createdAt: response.created_at || new Date().toISOString(),
-        expiresAt: response.expires_at || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-      };
-
-      this.logger.info('Session retrieved successfully', { 
-        sessionId: session.id,
-        status: session.status 
-      });
-      return session;
+      // For now, we'll throw an error as session retrieval would need a separate API route
+      // In a real implementation, you'd create a GET endpoint for this
+      throw new Error('Session retrieval not implemented for client-side usage');
 
     } catch (error) {
       this.logger.error('Failed to retrieve session', error as Error, { sessionId });
@@ -104,12 +87,10 @@ export class BeyondPresenceService {
     this.logger.info('Destroying session', { sessionId });
 
     try {
-      // Note: This assumes the BeyondPresence SDK has a session.delete method
-      // If not available, we may need to handle this differently
-      await this.client.session.delete(sessionId);
+      // For now, we'll just log that we're destroying the session
+      // In a real implementation, you'd create a DELETE endpoint for this
+      this.logger.warn('Session destruction not implemented for client-side usage', { sessionId });
       
-      this.logger.info('Session destroyed successfully', { sessionId });
-
     } catch (error) {
       this.logger.error('Failed to destroy session', error as Error, { sessionId });
       throw handleApiError(error, 'Session destruction failed');

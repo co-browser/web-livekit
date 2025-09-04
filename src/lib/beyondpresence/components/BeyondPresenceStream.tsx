@@ -23,6 +23,8 @@ export function BeyondPresenceStream({
   onAudioTrackAttached
 }: BeyondPresenceStreamProps) {
   const logger = createContextLogger('BeyondPresenceStream');
+  const [micEnabled, setMicEnabled] = React.useState(false);
+  const micCleanupRef = React.useRef<(() => Promise<void>) | null>(null);
 
   // Use the BeyondPresence hook for state management
   const {
@@ -36,6 +38,7 @@ export function BeyondPresenceStream({
     connect,
     disconnect,
     startAudio,
+    startMicrophoneStream,
     canPlayAudio,
     audioPlaybackBlocked
   } = useBeyondPresence(config);
@@ -49,8 +52,44 @@ export function BeyondPresenceStream({
   // Handle disconnect
   const handleDisconnect = async () => {
     logger.info('Disconnecting from stream');
+    // Clean up microphone if enabled
+    if (micCleanupRef.current) {
+      await micCleanupRef.current();
+      micCleanupRef.current = null;
+      setMicEnabled(false);
+    }
     await disconnect();
   };
+
+  // Request microphone permission on mount
+  React.useEffect(() => {
+    // Request microphone permission early to avoid user having to click twice
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => {
+        logger.info('Microphone permission granted');
+        // Stop the stream immediately, we just wanted permission
+        stream.getTracks().forEach(track => track.stop());
+      })
+      .catch(err => {
+        logger.warn('Microphone permission denied or not available', err);
+      });
+  }, []);
+
+  // Auto-enable microphone when connected
+  React.useEffect(() => {
+    if (isConnected && !micEnabled && videoTracks.length > 0) {
+      // Automatically enable microphone when avatar video appears
+      logger.info('Auto-enabling microphone as avatar is ready');
+      setTimeout(async () => {
+        const cleanup = await startMicrophoneStream();
+        if (cleanup) {
+          micCleanupRef.current = cleanup;
+          setMicEnabled(true);
+          logger.info('Microphone auto-enabled successfully');
+        }
+      }, 1000); // Small delay to ensure everything is ready
+    }
+  }, [isConnected, micEnabled, videoTracks.length, startMicrophoneStream, logger]);
 
   return (
     <div 
@@ -195,16 +234,57 @@ export function BeyondPresenceStream({
           </div>
         )}
 
-        {/* Disconnect Controls */}
+        {/* Disconnect and Microphone Controls */}
         {isConnected && (
           <div 
-            className="disconnect-controls"
+            className="session-controls"
             style={{
               display: 'flex',
               justifyContent: 'center',
+              gap: '12px',
               padding: '12px'
             }}
           >
+            <button
+              onClick={async () => {
+                if (!micEnabled) {
+                  logger.info('Starting microphone stream');
+                  const cleanup = await startMicrophoneStream();
+                  if (cleanup) {
+                    micCleanupRef.current = cleanup;
+                    setMicEnabled(true);
+                    logger.info('Microphone stream started successfully');
+                  }
+                } else {
+                  logger.info('Stopping microphone stream');
+                  if (micCleanupRef.current) {
+                    await micCleanupRef.current();
+                    micCleanupRef.current = null;
+                  }
+                  setMicEnabled(false);
+                  logger.info('Microphone stream stopped');
+                }
+              }}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: micEnabled ? '#dc2626' : '#10b981',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '14px',
+                cursor: 'pointer',
+                fontWeight: '500'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.backgroundColor = micEnabled ? '#b91c1c' : '#059669';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.backgroundColor = micEnabled ? '#dc2626' : '#10b981';
+              }}
+            >
+              {micEnabled ? '🔇 Stop Microphone' : '🎤 Start Microphone'}
+            </button>
+            
             <button
               onClick={handleDisconnect}
               style={{

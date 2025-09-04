@@ -69,7 +69,17 @@ export class LiveKitService {
 
       this.logger.info('Successfully connected to LiveKit room', {
         roomName: this.room.name,
-        numParticipants: this.room.numParticipants
+        numParticipants: this.room.numParticipants,
+        participants: Array.from(this.room.remoteParticipants.values()).map(p => ({
+          identity: p.identity,
+          sid: p.sid,
+          tracks: Array.from(p.trackPublications.values()).map(t => ({
+            trackSid: t.trackSid,
+            kind: t.kind,
+            source: t.source,
+            subscribed: t.isSubscribed
+          }))
+        }))
       });
 
       // Reset reconnect attempts on successful connection
@@ -170,7 +180,11 @@ export class LiveKitService {
     if (!this.room) return;
 
     this.room.on(RoomEvent.Connected, () => {
-      this.logger.info('Room connected event received');
+      this.logger.info('Room connected event received', {
+        roomName: this.room?.name,
+        localParticipant: this.room?.localParticipant?.identity,
+        remoteParticipants: this.room ? Array.from(this.room.remoteParticipants.values()).map(p => p.identity) : []
+      });
     });
 
     this.room.on(RoomEvent.Disconnected, (reason) => {
@@ -197,7 +211,10 @@ export class LiveKitService {
       this.logger.info('Track subscribed', {
         trackKind: track.kind,
         trackSource: track.source,
-        participant: participant.identity
+        participant: participant.identity,
+        trackSid: track.sid,
+        isMuted: track.isMuted,
+        isEnabled: publication.isEnabled
       });
     });
 
@@ -217,6 +234,36 @@ export class LiveKitService {
 
     this.room.on(RoomEvent.MediaDevicesError, (error) => {
       this.logger.error('Media devices error', error);
+    });
+
+    this.room.on(RoomEvent.ParticipantConnected, (participant) => {
+      this.logger.info('🎉 PARTICIPANT JOINED!', {
+        identity: participant.identity,
+        sid: participant.sid,
+        isLocal: participant.isLocal,
+        metadata: participant.metadata,
+        tracks: Array.from(participant.trackPublications.values()).map(t => ({
+          trackSid: t.trackSid,
+          kind: t.kind,
+          source: t.source,
+          isSubscribed: t.isSubscribed
+        }))
+      });
+      
+      // Check if this is the avatar
+      if (participant.identity.includes('avatar')) {
+        this.logger.info('🤖 AVATAR HAS JOINED THE ROOM!', {
+          identity: participant.identity,
+          trackCount: participant.trackPublications.size
+        });
+      }
+    });
+
+    this.room.on(RoomEvent.ParticipantDisconnected, (participant) => {
+      this.logger.info('Participant disconnected', {
+        identity: participant.identity,
+        sid: participant.sid
+      });
     });
   }
 
@@ -252,5 +299,87 @@ export class LiveKitService {
    */
   canPlaybackAudio(): boolean {
     return this.room?.canPlaybackAudio ?? false;
+  }
+
+  /**
+   * Publishes data to a specific participant or all participants
+   */
+  async publishData(
+    data: Uint8Array | string,
+    kind: 'reliable' | 'lossy' = 'reliable',
+    destinationIdentities?: string[]
+  ): Promise<void> {
+    if (!this.room) {
+      throw handleLiveKitError(new Error('No room connected'), 'publish data failed');
+    }
+
+    try {
+      const encoder = new TextEncoder();
+      const payload = typeof data === 'string' ? encoder.encode(data) : data;
+      
+      await this.room.localParticipant.publishData(payload, {
+        reliable: kind === 'reliable',
+        destinationIdentities,
+      });
+      
+      this.logger.debug('Data published successfully', {
+        size: payload.byteLength,
+        kind,
+        destinations: destinationIdentities
+      });
+    } catch (error) {
+      this.logger.error('Failed to publish data', error as Error);
+      throw handleLiveKitError(error, 'publish data failed');
+    }
+  }
+
+  /**
+   * Publishes audio data to the avatar
+   */
+  async sendAudioToAvatar(audioData: Uint8Array): Promise<void> {
+    if (!this.room) {
+      throw handleLiveKitError(new Error('No room connected'), 'send audio failed');
+    }
+
+    // Find the avatar participant
+    const avatarParticipant = Array.from(this.room.remoteParticipants.values()).find(
+      p => p.identity.includes('avatar')
+    );
+
+    if (!avatarParticipant) {
+      this.logger.warn('Avatar participant not found in room');
+      return;
+    }
+
+    try {
+      // Send audio data directly to the avatar via data channel
+      await this.publishData(audioData, 'lossy', [avatarParticipant.identity]);
+      
+      this.logger.debug('Audio data sent to avatar', {
+        avatarIdentity: avatarParticipant.identity,
+        dataSize: audioData.byteLength
+      });
+    } catch (error) {
+      this.logger.error('Failed to send audio to avatar', error as Error);
+      throw error;
+    }
+  }
+
+  /**
+   * Sets up data channel listeners
+   */
+  setupDataChannelListeners(
+    onDataReceived?: (data: Uint8Array, participant: any) => void
+  ): void {
+    if (!this.room) return;
+
+    this.room.on('dataReceived', (payload: Uint8Array, participant) => {
+      this.logger.debug('Data received from participant', {
+        from: participant?.identity,
+        size: payload.byteLength
+      });
+      
+      onDataReceived?.(payload, participant);
+    });
   }
 }
