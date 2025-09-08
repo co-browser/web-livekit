@@ -109,11 +109,11 @@ Rules:
     session = AgentSession(
         stt=openai.STT(model="whisper-1"),
         llm=openai.LLM(model=_get_env("PT_LLM_MODEL", "gpt-4o-mini")),
-        # tts=openai.TTS(voice=_get_env("PT_TTS_VOICE", "alloy")),
-        tts=elevenlabs.TTS(
-            voice_id="ODq5zmih8GrVes37Dizd",
-            model="eleven_multilingual_v2"
-        ),
+        tts=openai.TTS(voice=_get_env("PT_TTS_VOICE", "alloy")),
+        # tts=elevenlabs.TTS(
+        #     voice_id="ODq5zmih8GrVes37Dizd",
+        #     model="eleven_multilingual_v2"
+        # ),
         vad=vad,
     )
 
