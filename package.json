@@ -12,7 +12,10 @@
     "test:coverage": "jest --coverage"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^2.0.23",
     "@bey-dev/sdk": "^0.0.1",
+    "@kontext.dev/kontext-sdk": "^0.2.1",
+    "ai": "^5.0.28",
     "livekit-client": "^2.15.6",
     "livekit-server-sdk": "^2.13.3",
     "next": "15.5.2",

@@ -158,15 +158,34 @@ export function useBeyondPresence(config: UseBeyondPresenceConfig): UseBeyondPre
     try {
       logger.info('Starting connection process');
 
-      // Create BeyondPresence session
-      const newSession = await beyondPresenceService.current.createSession(config.session);
+      // Create BeyondPresence session (simplified - just gets viewer token)
+      const newSession = await beyondPresenceService.current.createSession({
+        ...config.session,
+        roomName: `avatar-room-${Date.now()}` // Match Python agent's room naming
+      });
       setSession(newSession);
       
-      logger.info('BeyondPresence session created', { 
+      logger.info('Viewer session created', { 
         sessionId: newSession.id,
+        roomName: newSession.roomName,
         fullSession: newSession
       });
-      console.log('Full BeyondPresence session:', newSession);
+      console.log('Full session details:', newSession);
+      
+      // Decode the viewer token to see room name
+      if (newSession.livekitToken) {
+        const tokenParts = newSession.livekitToken.split('.');
+        if (tokenParts.length === 3) {
+          try {
+            const payload = JSON.parse(atob(tokenParts[1]));
+            console.log('Viewer token payload:', payload);
+            console.log('Viewer will join room:', payload.video?.room);
+            console.log('Viewer identity:', payload.sub);
+          } catch (e) {
+            console.log('Could not decode viewer token');
+          }
+        }
+      }
 
       // Connect to LiveKit room
       const room = await liveKitService.current.connect({
@@ -192,30 +211,52 @@ export function useBeyondPresence(config: UseBeyondPresenceConfig): UseBeyondPre
         handleConnected();
       }
 
-      // Check for existing participants after a short delay
-      setTimeout(() => {
+      // Log room state for debugging
+      logger.info('Room state after connection', {
+        roomName: room.name,
+        localParticipant: room.localParticipant?.identity,
+        state: room.state,
+        canPublishData: room.localParticipant?.canPublishData,
+        canPublishSources: room.localParticipant?.canPublishSources
+      });
+
+      // Check for existing participants periodically
+      const checkInterval = setInterval(() => {
         if (room.remoteParticipants.size > 0) {
-          logger.info('Existing participants found:', {
+          logger.info('🎉 Remote participants found!', {
             count: room.remoteParticipants.size,
             participants: Array.from(room.remoteParticipants.values()).map(p => ({
               identity: p.identity,
               sid: p.sid,
+              isAgent: p.isAgent,
+              isCameraEnabled: p.isCameraEnabled,
+              isMicrophoneEnabled: p.isMicrophoneEnabled,
               tracks: Array.from(p.trackPublications.values()).map(t => ({
                 kind: t.kind,
                 source: t.source,
-                isSubscribed: t.isSubscribed
+                isSubscribed: t.isSubscribed,
+                isEnabled: t.isEnabled
               }))
             }))
           });
+          clearInterval(checkInterval);
         } else {
-          logger.warn('No remote participants in room - avatar may not be publishing yet');
-          logger.info('Room details:', {
-            name: room.name,
+          logger.warn('Still waiting for avatar to join...', {
+            roomName: room.name,
             localParticipant: room.localParticipant?.identity,
-            state: room.state
+            state: room.state,
+            elapsedSeconds: 5
           });
         }
-      }, 5000); // Increased to 5 seconds
+      }, 5000);
+      
+      // Clear interval after 30 seconds
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        if (room.remoteParticipants.size === 0) {
+          logger.error('Avatar never joined the room after 30 seconds');
+        }
+      }, 30000);
 
     } catch (err) {
       logger.error('Connection failed', err as Error);
@@ -292,6 +333,46 @@ export function useBeyondPresence(config: UseBeyondPresenceConfig): UseBeyondPre
     }
   }, [config.onError, logger]);
 
+  // Start capturing and publishing microphone audio as LiveKit track
+  const startMicrophoneStream = useCallback(async () => {
+    if (!room) {
+      const error = new Error('Room not connected');
+      setError(error);
+      config.onError?.(error);
+      return;
+    }
+
+    try {
+      logger.info('Starting microphone capture for voice chat');
+      
+      // Enable microphone and publish as LiveKit audio track
+      // This allows the Python agent to subscribe to our audio
+      await room.localParticipant.setMicrophoneEnabled(true);
+      
+      logger.info('Microphone enabled and publishing to room');
+      
+      // Check if microphone track was published
+      const micTrack = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+      if (micTrack) {
+        logger.info('Microphone track published successfully', {
+          trackSid: micTrack.trackSid,
+          isEnabled: micTrack.isEnabled,
+          isMuted: micTrack.isMuted
+        });
+      }
+      
+      // Return cleanup function
+      return async () => {
+        await room.localParticipant.setMicrophoneEnabled(false);
+        logger.info('Microphone disabled');
+      };
+    } catch (err) {
+      logger.error('Failed to start microphone stream', err as Error);
+      setError(err as Error);
+      config.onError?.(err as Error);
+    }
+  }, [room, config.onError, logger]);
+
   // Auto-connect effect
   useEffect(() => {
     if (config.autoConnect && !isConnecting && !isConnected && !error) {
@@ -326,6 +407,7 @@ export function useBeyondPresence(config: UseBeyondPresenceConfig): UseBeyondPre
     connect,
     disconnect,
     startAudio,
+    startMicrophoneStream,
     
     // Audio state
     canPlayAudio,
